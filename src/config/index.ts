@@ -15,6 +15,7 @@ export const config = {
     port: parseInt(process.env.FALKORDB_PORT || '6379'),
     username: process.env.FALKORDB_USERNAME || '',
     password: process.env.FALKORDB_PASSWORD || '',
+    defaultReadOnly: process.env.FALKORDB_DEFAULT_READONLY === 'true',
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',

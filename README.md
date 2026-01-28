@@ -10,11 +10,12 @@ FalkorDB MCP Server enables AI assistants like Claude to interact with FalkorDB 
 ## 🎯 What is this?
 
 This server implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), allowing AI models to:
-- **Query graph databases** using OpenCypher
+- **Query graph databases** using OpenCypher (with read-only mode support)
 - **Create and manage** nodes and relationships
 - **Store and retrieve** key-value data
 - **List and explore** multiple graphs
 - **Delete graphs** when needed
+- **Read-only queries** for replica instances or to prevent accidental writes
 
 ## 🚀 Quick Start
 
@@ -72,6 +73,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
    FALKORDB_PORT=6379
    FALKORDB_USERNAME=    # Optional
    FALKORDB_PASSWORD=    # Optional
+   FALKORDB_DEFAULT_READONLY=false  # Set to 'true' for read-only mode (useful for replicas)
    
    # Redis Configuration (for key-value operations)
    REDIS_URL=redis://localhost:6379
@@ -115,7 +117,15 @@ Once connected, you can ask Claude to:
 "Show me all people who know each other"
 "Find the shortest path between two nodes"
 "What relationships does John have?"
+"Run a read-only query on the replica instance"
 ```
+
+**Note:** The `query_graph` tool now supports a `readOnly` parameter to execute queries in read-only mode using `GRAPH.RO_QUERY`. This is ideal for:
+- Running queries on replica instances
+- Preventing accidental write operations
+- Ensuring data integrity in production environments
+
+There's also a dedicated `query_graph_readonly` tool that always executes queries in read-only mode.
 
 ### 📝 Manage Data
 ```
@@ -211,6 +221,22 @@ FALKORDB_USERNAME=your-username
 FALKORDB_PASSWORD=your-secure-password
 ```
 
+### Read-Only Mode for Replica Instances
+
+If you're connecting to a FalkorDB replica instance or want to ensure no write operations are performed, you can enable read-only mode by default:
+
+```env
+FALKORDB_DEFAULT_READONLY=true
+```
+
+This will make all queries execute using `GRAPH.RO_QUERY` by default. You can still override this per-query by setting the `readOnly` parameter in the `query_graph` tool.
+
+**Use cases:**
+- **Replica instances**: Prevent writes to read replicas in replication setups
+- **Production safety**: Ensure critical data isn't accidentally modified
+- **Reporting/analytics**: Run queries for dashboards without risk of data changes
+- **Multi-tenant environments**: Provide read-only access to certain users
+
 ### Running Multiple Instances
 
 You can run multiple MCP servers for different FalkorDB instances:
@@ -222,14 +248,16 @@ You can run multiple MCP servers for different FalkorDB instances:
       "command": "node",
       "args": ["path/to/server/dist/index.js"],
       "env": {
-        "FALKORDB_HOST": "dev.falkordb.local"
+        "FALKORDB_HOST": "dev.falkordb.local",
+        "FALKORDB_DEFAULT_READONLY": "false"
       }
     },
-    "falkordb-prod": {
+    "falkordb-prod-replica": {
       "command": "node", 
       "args": ["path/to/server/dist/index.js"],
       "env": {
-        "FALKORDB_HOST": "prod.falkordb.com"
+        "FALKORDB_HOST": "replica.falkordb.com",
+        "FALKORDB_DEFAULT_READONLY": "true"
       }
     }
   }
