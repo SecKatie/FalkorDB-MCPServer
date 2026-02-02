@@ -18,7 +18,8 @@ jest.mock('../config/index.js', () => ({
       host: 'localhost',
       port: 6379,
       username: 'testuser',
-      password: 'testpass'
+      password: 'testpass',
+      defaultReadOnly: false
     }
   }
 }));
@@ -27,6 +28,7 @@ jest.mock('../config/index.js', () => ({
 jest.mock('falkordb', () => {
   const mockSelectGraph = jest.fn();
   const mockQuery = jest.fn();
+  const mockRoQuery = jest.fn();
   const mockList = jest.fn();
   const mockClose = jest.fn();
   const mockPing = jest.fn();
@@ -40,6 +42,7 @@ jest.mock('falkordb', () => {
         }),
         selectGraph: mockSelectGraph.mockReturnValue({
           query: mockQuery,
+          roQuery: mockRoQuery,
           delete: mockDelete
         }),
         list: mockList,
@@ -48,6 +51,7 @@ jest.mock('falkordb', () => {
     },
     mockSelectGraph,
     mockQuery,
+    mockRoQuery,
     mockList,
     mockClose,
     mockPing,
@@ -218,6 +222,7 @@ describe('FalkorDB Service', () => {
       // Assert
       expect(mockFalkorDB.mockSelectGraph).toHaveBeenCalledWith(graphName);
       expect(mockFalkorDB.mockQuery).toHaveBeenCalledWith(query, params);
+      expect(mockFalkorDB.mockRoQuery).not.toHaveBeenCalled();
       expect(result).toEqual(expectedResult);
     });
 
@@ -240,6 +245,53 @@ describe('FalkorDB Service', () => {
       // Assert
       expect(mockFalkorDB.mockSelectGraph).toHaveBeenCalledWith(graphName);
       expect(mockFalkorDB.mockQuery).toHaveBeenCalledWith(query, undefined);
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should execute a read-only query when readOnly flag is true', async () => {
+      // Arrange
+      const graphName = 'testGraph';
+      const query = 'MATCH (n) RETURN n';
+      const params = { param1: 'value1' };
+      const expectedResult = { records: [{ id: 1 }] };
+      
+      mockFalkorDB.mockRoQuery.mockResolvedValue(expectedResult);
+      
+      // Force client to be available
+      (falkorDBService as any).client = {
+        selectGraph: mockFalkorDB.mockSelectGraph
+      };
+      
+      // Act
+      const result = await falkorDBService.executeQuery(graphName, query, params, true);
+      
+      // Assert
+      expect(mockFalkorDB.mockSelectGraph).toHaveBeenCalledWith(graphName);
+      expect(mockFalkorDB.mockRoQuery).toHaveBeenCalledWith(query, params);
+      expect(mockFalkorDB.mockQuery).not.toHaveBeenCalled();
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should execute a read-only query without params', async () => {
+      // Arrange
+      const graphName = 'testGraph';
+      const query = 'MATCH (n) RETURN n';
+      const expectedResult = { records: [{ id: 1 }] };
+      
+      mockFalkorDB.mockRoQuery.mockResolvedValue(expectedResult);
+      
+      // Force client to be available
+      (falkorDBService as any).client = {
+        selectGraph: mockFalkorDB.mockSelectGraph
+      };
+      
+      // Act
+      const result = await falkorDBService.executeQuery(graphName, query, undefined, true);
+      
+      // Assert
+      expect(mockFalkorDB.mockSelectGraph).toHaveBeenCalledWith(graphName);
+      expect(mockFalkorDB.mockRoQuery).toHaveBeenCalledWith(query, undefined);
+      expect(mockFalkorDB.mockQuery).not.toHaveBeenCalled();
       expect(result).toEqual(expectedResult);
     });
     
@@ -277,6 +329,69 @@ describe('FalkorDB Service', () => {
         expect(error).toBeInstanceOf(AppError);
         expect((error as AppError).name).toBe(CommonErrors.OPERATION_FAILED);
       }
+    });
+
+    it('should throw AppError when read-only query execution fails', async () => {
+      // Arrange
+      const graphName = 'testGraph';
+      const query = 'CREATE (n) RETURN n';
+      const queryError = new Error('Write operations not allowed in read-only mode');
+      
+      mockFalkorDB.mockRoQuery.mockRejectedValue(queryError);
+      
+      // Force client to be available
+      (falkorDBService as any).client = {
+        selectGraph: mockFalkorDB.mockSelectGraph
+      };
+      
+      // Act & Assert
+      try {
+        await falkorDBService.executeQuery(graphName, query, undefined, true);
+        fail('Expected executeQuery to throw AppError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AppError);
+        expect((error as AppError).name).toBe(CommonErrors.OPERATION_FAILED);
+        expect((error as AppError).message).toContain('read-only');
+      }
+    });
+  });
+
+  describe('executeReadOnlyQuery', () => {
+    it('should execute a read-only query using ro_query', async () => {
+      // Arrange
+      const graphName = 'testGraph';
+      const query = 'MATCH (n) RETURN n';
+      const params = { param1: 'value1' };
+      const expectedResult = { records: [{ id: 1 }] };
+      
+      mockFalkorDB.mockRoQuery.mockResolvedValue(expectedResult);
+      
+      // Force client to be available
+      (falkorDBService as any).client = {
+        selectGraph: mockFalkorDB.mockSelectGraph
+      };
+      
+      // Act
+      const result = await falkorDBService.executeReadOnlyQuery(graphName, query, params);
+      
+      // Assert
+      expect(mockFalkorDB.mockSelectGraph).toHaveBeenCalledWith(graphName);
+      expect(mockFalkorDB.mockRoQuery).toHaveBeenCalledWith(query, params);
+      expect(mockFalkorDB.mockQuery).not.toHaveBeenCalled();
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should throw AppError if client is not initialized', async () => {
+      // Arrange
+      (falkorDBService as any).client = null;
+      
+      // Act & Assert
+      await expect(falkorDBService.executeReadOnlyQuery('graph', 'query'))
+        .rejects
+        .toThrow(AppError);
+      await expect(falkorDBService.executeReadOnlyQuery('graph', 'query'))
+        .rejects
+        .toThrow('FalkorDB client not initialized');
     });
   });
   

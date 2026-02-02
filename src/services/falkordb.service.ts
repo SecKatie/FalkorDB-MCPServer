@@ -70,7 +70,7 @@ class FalkorDBService {
     }
   }
 
-  async executeQuery(graphName: string, query: string, params?: Record<string, any>): Promise<GraphReply<any>> {
+  async executeQuery(graphName: string, query: string, params?: Record<string, any>, readOnly: boolean = false): Promise<GraphReply<any>> {
     if (!this.client) {
       throw new AppError(
         CommonErrors.CONNECTION_FAILED,
@@ -81,25 +81,40 @@ class FalkorDBService {
 
     try {
       const graph = this.client.selectGraph(graphName);
-      const result = await graph.query(query, params);
+      const result = readOnly 
+        ? await graph.roQuery(query, params)
+        : await graph.query(query, params);
       
       logger.debug('Query executed successfully', {
         graphName,
         query: query.substring(0, 100) + (query.length > 100 ? '...' : ''),
-        hasParams: !!params
+        hasParams: !!params,
+        readOnly
       });
       
       return result;
     } catch (error) {
       const appError = new AppError(
         CommonErrors.OPERATION_FAILED,
-        `Failed to execute query on graph '${graphName}': ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to execute ${readOnly ? 'read-only ' : ''}query on graph '${graphName}': ${error instanceof Error ? error.message : String(error)}`,
         true
       );
       
-      logger.error('Query execution failed', appError, { graphName, query });
+      logger.error('Query execution failed', appError, { graphName, query, readOnly });
       throw appError;
     }
+  }
+
+  /**
+   * Execute a read-only query on a specific graph
+   * This is useful for replica instances or when you want to ensure no writes occur
+   * @param graphName - The name of the graph to query
+   * @param query - The OpenCypher query to execute
+   * @param params - Optional query parameters
+   * @returns Query result
+   */
+  async executeReadOnlyQuery(graphName: string, query: string, params?: Record<string, any>): Promise<GraphReply<any>> {
+    return this.executeQuery(graphName, query, params, true);
   }
 
   /**

@@ -4,16 +4,67 @@ import { falkorDBService } from '../services/falkordb.service.js';
 import { redisService } from '../services/redis.service.js';
 import { logger } from '../services/logger.service.js';
 import { AppError, CommonErrors } from '../errors/AppError.js';
+import { config } from '../config/index.js';
 
 function registerQueryGraphTool(server: McpServer): void {
   server.registerTool(
     "query_graph",
     {
       title: "Query Graph",
-      description: "Run a OpenCypher query on a graph",
+      description: "Run a OpenCypher query on a graph. Supports both read-write and read-only queries.",
       inputSchema: {
         graphName: z.string().describe("The name of the graph to query"),
         query: z.string().describe("The OpenCypher query to run"),
+        readOnly: z.boolean().optional().describe("If true, executes as a read-only query (GRAPH.RO_QUERY). Useful for replica instances or to prevent accidental writes. Defaults to FALKORDB_DEFAULT_READONLY environment variable."),
+      },
+    },
+    async ({graphName, query, readOnly}) => {
+      try {
+        if (!graphName?.trim()) {
+          throw new AppError(
+            CommonErrors.INVALID_INPUT,
+            'Graph name is required and cannot be empty',
+            true
+          );
+        }
+        
+        if (!query?.trim()) {
+          throw new AppError(
+            CommonErrors.INVALID_INPUT,
+            'Query is required and cannot be empty',
+            true
+          );
+        }
+        
+        // Use the provided readOnly flag, or fall back to the default from config
+        const isReadOnly = readOnly !== undefined ? readOnly : config.falkorDB.defaultReadOnly;
+        
+        const result = await falkorDBService.executeQuery(graphName, query, undefined, isReadOnly);
+        await logger.debug('Query tool executed successfully', { graphName, readOnly: isReadOnly });
+        
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      } catch (error) {
+        await logger.error('Query tool execution failed', error instanceof Error ? error : new Error(String(error)), { graphName, query });
+        throw error;
+      }
+    }
+  )
+}
+
+function registerQueryGraphReadOnlyTool(server: McpServer): void {
+  server.registerTool(
+    "query_graph_readonly",
+    {
+      title: "Query Graph (Read-Only)",
+      description: "Run a read-only OpenCypher query on a graph using GRAPH.RO_QUERY. This ensures no write operations are performed and is ideal for replica instances.",
+      inputSchema: {
+        graphName: z.string().describe("The name of the graph to query"),
+        query: z.string().describe("The read-only OpenCypher query to run (write operations will fail)"),
       },
     },
     async ({graphName, query}) => {
@@ -34,8 +85,8 @@ function registerQueryGraphTool(server: McpServer): void {
           );
         }
         
-        const result = await falkorDBService.executeQuery(graphName, query);
-        await logger.debug('Query tool executed successfully', { graphName });
+        const result = await falkorDBService.executeReadOnlyQuery(graphName, query);
+        await logger.debug('Read-only query tool executed successfully', { graphName });
         
         return {
           content: [{
@@ -44,7 +95,7 @@ function registerQueryGraphTool(server: McpServer): void {
           }]
         };
       } catch (error) {
-        await logger.error('Query tool execution failed', error instanceof Error ? error : new Error(String(error)), { graphName, query });
+        await logger.error('Read-only query tool execution failed', error instanceof Error ? error : new Error(String(error)), { graphName, query });
         throw error;
       }
     }
@@ -267,8 +318,9 @@ function registerDeleteKeyTool(server: McpServer): void {
 }
 
 export default function registerAllTools(server: McpServer): void {
-  // Register query_graph tool
+  // Register query_graph tools
   registerQueryGraphTool(server);
+  registerQueryGraphReadOnlyTool(server);
   registerListGraphsTool(server);
   registerDeleteGraphTool(server);
   registerSetKeyTool(server);
